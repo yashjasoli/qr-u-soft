@@ -4,6 +4,7 @@ import 'package:flutter/services.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:mobile_scanner/mobile_scanner.dart';
 import 'package:url_launcher/url_launcher.dart';
+import 'package:audioplayers/audioplayers.dart';
 
 import '../service/scan_history_service.dart';
 import 'result_screen.dart';
@@ -20,17 +21,17 @@ class _QrScanScreenState extends State<QrScanScreen>
     with TickerProviderStateMixin {
   bool isScanned = false;
   bool isTorchOn = false;
+  bool isSoundOn = true; // 🔊 sound toggle
 
   final MobileScannerController controller =
   MobileScannerController(torchEnabled: false);
 
   final ImagePicker _picker = ImagePicker();
+  final AudioPlayer _audioPlayer = AudioPlayer();
 
-  // Focus indicator
   Offset? _focusPoint;
   bool _showFocus = false;
 
-  // Laser animation
   late AnimationController laserController;
   late Animation<double> laserAnimation;
 
@@ -51,15 +52,23 @@ class _QrScanScreenState extends State<QrScanScreen>
   void dispose() {
     controller.dispose();
     laserController.dispose();
+    _audioPlayer.dispose();
     super.dispose();
   }
 
-  // 🔔 Scan vibration
-  void _scanVibration() {
+  // 🔔 Scan vibration + sound
+  Future<void> _scanFeedback() async {
     HapticFeedback.mediumImpact();
+
+    if (isSoundOn) {
+      await _audioPlayer.play(
+        AssetSource('sounds/scan_beep.mp3'),
+        volume: 0.8,
+      );
+    }
   }
 
-  // 🖼 Pick image & scan
+  // 🖼 Gallery scan
   Future<void> _pickImageAndScan() async {
     final XFile? image =
     await _picker.pickImage(source: ImageSource.gallery);
@@ -77,18 +86,18 @@ class _QrScanScreenState extends State<QrScanScreen>
     _handleResult(capture.barcodes.first.rawValue ?? '');
   }
 
-  // 🔎 HANDLE RESULT (URL + PAYMENT)
+  // 🔎 HANDLE RESULT (PAYMENT + URL)
   Future<void> _handleResult(String value) async {
     if (isScanned) return;
     isScanned = true;
 
-    _scanVibration();
+    await _scanFeedback();
     await ScanHistoryService().saveScan(value);
 
     final v = value.trim();
     Uri? uri;
 
-    // 💳 PAYMENT GATEWAYS
+    // 💳 PAYMENT
     if (v.startsWith('upi://') ||
         v.startsWith('paytm://') ||
         v.startsWith('phonepe://') ||
@@ -102,7 +111,7 @@ class _QrScanScreenState extends State<QrScanScreen>
       }
     }
 
-    // 🌐 WEBSITE / APP LINKS
+    // 🌐 WEB
     if (!v.startsWith('http') && v.contains('.')) {
       uri = Uri.parse('https://$v');
     } else {
@@ -115,7 +124,7 @@ class _QrScanScreenState extends State<QrScanScreen>
       return;
     }
 
-    // 📝 NORMAL TEXT
+    // 📝 TEXT
     Navigator.push(
       context,
       MaterialPageRoute(builder: (_) => ResultScreen(text: value)),
@@ -129,30 +138,27 @@ class _QrScanScreenState extends State<QrScanScreen>
     controller.toggleTorch();
   }
 
-  // 🎯 Focus indicator UI
+  void _toggleSound() {
+    setState(() => isSoundOn = !isSoundOn);
+  }
+
   Widget _focusIndicator() {
     if (!_showFocus || _focusPoint == null) return const SizedBox();
 
     return Positioned(
       left: _focusPoint!.dx - 30,
       top: _focusPoint!.dy - 30,
-      child: AnimatedScale(
-        scale: 1,
-        duration: const Duration(milliseconds: 600),
-        curve: Curves.easeOutBack,
-        child: Container(
-          width: 60,
-          height: 60,
-          decoration: BoxDecoration(
-            border: Border.all(color: const Color(0xFF8B5CF6), width: 2),
-            borderRadius: BorderRadius.circular(12),
-          ),
+      child: Container(
+        width: 60,
+        height: 60,
+        decoration: BoxDecoration(
+          border: Border.all(color: const Color(0xFF8B5CF6), width: 2),
+          borderRadius: BorderRadius.circular(12),
         ),
       ),
     );
   }
 
-  // 🧱 UI
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -170,7 +176,6 @@ class _QrScanScreenState extends State<QrScanScreen>
         },
         child: Stack(
           children: [
-            // CAMERA
             MobileScanner(
               controller: controller,
               onDetect: (capture) {
@@ -184,7 +189,6 @@ class _QrScanScreenState extends State<QrScanScreen>
               painter: ScannerOverlayPainter(),
             ),
 
-            // SCAN FRAME
             Center(
               child: SizedBox(
                 width: 280,
@@ -193,7 +197,6 @@ class _QrScanScreenState extends State<QrScanScreen>
               ),
             ),
 
-            // LASER
             AnimatedBuilder(
               animation: laserAnimation,
               builder: (_, __) {
@@ -213,7 +216,7 @@ class _QrScanScreenState extends State<QrScanScreen>
 
             _focusIndicator(),
 
-            // TOP CONTROLS
+            // 🔝 TOP CONTROLS
             SafeArea(
               child: Padding(
                 padding: const EdgeInsets.all(20),
@@ -231,6 +234,14 @@ class _QrScanScreenState extends State<QrScanScreen>
                     ),
                     Row(
                       children: [
+                        _circleBtn(
+                          isSoundOn
+                              ? Icons.volume_up_rounded
+                              : Icons.volume_off_rounded,
+                          _toggleSound,
+                          active: isSoundOn,
+                        ),
+                        const SizedBox(width: 12),
                         _circleBtn(Icons.image, _pickImageAndScan),
                         const SizedBox(width: 12),
                         _circleBtn(
@@ -273,15 +284,18 @@ class _QrScanScreenState extends State<QrScanScreen>
     );
   }
 }
-
-// 🔲 OVERLAY
+// 🔲 DARK OVERLAY WITH CUTOUT
 class ScannerOverlayPainter extends CustomPainter {
   @override
   void paint(Canvas canvas, Size size) {
-    final paint = Paint()..color = Colors.black.withOpacity(0.6);
-    final path = Path()..addRect(Rect.fromLTWH(0, 0, size.width, size.height));
+    final paint = Paint()
+      ..color = Colors.black.withOpacity(0.6)
+      ..style = PaintingStyle.fill;
 
-    final cutout = RRect.fromRectAndRadius(
+    final path = Path()
+      ..addRect(Rect.fromLTWH(0, 0, size.width, size.height));
+
+    final scanArea = RRect.fromRectAndRadius(
       Rect.fromCenter(
         center: Offset(size.width / 2, size.height / 2),
         width: 280,
@@ -290,13 +304,14 @@ class ScannerOverlayPainter extends CustomPainter {
       const Radius.circular(20),
     );
 
-    path.addRRect(cutout);
+    path.addRRect(scanArea);
     path.fillType = PathFillType.evenOdd;
+
     canvas.drawPath(path, paint);
   }
 
   @override
-  bool shouldRepaint(_) => false;
+  bool shouldRepaint(CustomPainter oldDelegate) => false;
 }
 
 // ⛶ CORNER BRACKETS
@@ -306,29 +321,52 @@ class CornerBracketsPainter extends CustomPainter {
     final paint = Paint()
       ..color = const Color(0xFF6366F1)
       ..strokeWidth = 4
+      ..strokeCap = StrokeCap.round
       ..style = PaintingStyle.stroke;
 
-    const l = 40.0;
+    const double length = 40;
 
-    canvas.drawLine(const Offset(0, 0), const Offset(l, 0), paint);
-    canvas.drawLine(const Offset(0, 0), const Offset(0, l), paint);
+    // Top-left
+    canvas.drawLine(const Offset(0, 0), Offset(length, 0), paint);
+    canvas.drawLine(const Offset(0, 0), Offset(0, length), paint);
 
+    // Top-right
     canvas.drawLine(
-        Offset(size.width, 0), Offset(size.width - l, 0), paint);
+      Offset(size.width, 0),
+      Offset(size.width - length, 0),
+      paint,
+    );
     canvas.drawLine(
-        Offset(size.width, 0), Offset(size.width, l), paint);
+      Offset(size.width, 0),
+      Offset(size.width, length),
+      paint,
+    );
 
+    // Bottom-left
     canvas.drawLine(
-        Offset(0, size.height), Offset(l, size.height), paint);
+      Offset(0, size.height),
+      Offset(length, size.height),
+      paint,
+    );
     canvas.drawLine(
-        Offset(0, size.height), Offset(0, size.height - l), paint);
+      Offset(0, size.height),
+      Offset(0, size.height - length),
+      paint,
+    );
 
-    canvas.drawLine(Offset(size.width, size.height),
-        Offset(size.width - l, size.height), paint);
-    canvas.drawLine(Offset(size.width, size.height),
-        Offset(size.width, size.height - l), paint);
+    // Bottom-right
+    canvas.drawLine(
+      Offset(size.width, size.height),
+      Offset(size.width - length, size.height),
+      paint,
+    );
+    canvas.drawLine(
+      Offset(size.width, size.height),
+      Offset(size.width, size.height - length),
+      paint,
+    );
   }
 
   @override
-  bool shouldRepaint(_) => false;
+  bool shouldRepaint(CustomPainter oldDelegate) => false;
 }

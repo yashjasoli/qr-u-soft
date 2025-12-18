@@ -13,7 +13,7 @@ class QruSoftApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: "QruSoft",
+      title: "Qr U Soft",
       theme: ThemeData(
         primarySwatch: Colors.blue,
         brightness: Brightness.light,
