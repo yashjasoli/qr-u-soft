@@ -1,5 +1,4 @@
 import 'package:flutter/material.dart';
-import 'package:qru_soft/screen/splash_screen.dart';
 
 import 'screen/home_screen.dart';
 
